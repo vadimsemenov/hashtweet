@@ -1,0 +1,3 @@
+rootProject.name = 'hashtweet'
+include 'hashtweet-core'
+
