@@ -1,41 +1,45 @@
 package ru.ifmo.ctddev.semenov
 
 import com.google.gson.annotations.SerializedName
+import kotlinx.coroutines.experimental.runBlocking
 import okhttp3.*
 import okhttp3.Credentials
+import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
 import retrofit2.http.Headers
+import ru.gildor.coroutines.retrofit.await
 import java.nio.charset.StandardCharsets
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.*
 
-class Hashtweet {
-    // TODO: make loadTweetList suspendable
-    fun loadTweetList(hashtag: String): TweetList? {
+class Hashtweet : AutoCloseable {
+    suspend fun loadTweetList(hashtag: String): TweetList? {
         if (accessToken == null && !authenticate()) {
             log("Cannot authenticate")
             return null
         }
 
-        val tweetsCall = twi.getTweets(
-                hashtag = hashtag,
-                count = null
-        )
-        val response = tweetsCall.execute()
-
-        if (!response.isSuccessful) {
-            log("Cannot load tweets: " +
-                    "code = ${response.code()} " +
-                    "message = ${response.message()} " +
-                    "body = ${response.errorBody()?.string()}"
-            )
-            return null
+        return try {
+            twi.getTweets(
+                    hashtag = hashtag,
+                    count = null
+            ).await()
+        } catch (e: HttpException) {
+            log("Cannot load tweets", e)
+            null
+        } catch (e: Exception) {
+            log("Cannot load tweets", e)
+            null
         }
-        return response.body()
+    }
+
+    override fun close() {
+        client.dispatcher().executorService().shutdown()
+        client.connectionPool().evictAll()
     }
 
     private val credentials = loadCredentials()
@@ -48,7 +52,7 @@ class Hashtweet {
         if (response == null || route == null) {
             return@Authenticator null
         }
-        if (!authenticate()) return@Authenticator null
+        if (runBlocking { !authenticate() }) return@Authenticator null
         val originalRequest = response.request()
         originalRequest.newBuilder()
                 .header("Authorization", "Bearer $accessToken")
@@ -79,29 +83,28 @@ class Hashtweet {
 
     private val twi = TwitterService.create(client)
 
-    private fun authenticate(): Boolean {
-        val tokenResponse = twi.getAuthToken(
-                Credentials.basic(credentials.consumerKey, credentials.consumerSecret, StandardCharsets.UTF_8)
-        ).execute()
-
-        val token = tokenResponse.body()
-        if (!tokenResponse.isSuccessful || token == null || token.tokenType != "bearer") {
-            log("Cannot authenticate: ${tokenResponse.raw()}")
-            if (tokenResponse.isSuccessful) {
-                log("Authentication response is successful, but weird: ${tokenResponse.body()}")
+    private suspend fun authenticate(): Boolean {
+        try {
+            val token = twi.getAuthToken(
+                    Credentials.basic(credentials.consumerKey, credentials.consumerSecret, StandardCharsets.UTF_8)
+            ).await()
+            if (token.tokenType == "bearer") {
+                accessToken = token.accessToken
+                return true
             }
-            return false
+            log("Cannot authenticate: Unknown token_type = '${token.tokenType}'")
+        } catch (e: Exception) {
+            log("Cannot authenticate", e)
         }
-        accessToken = token.accessToken
-        return true
+        return false
     }
 }
 
 
-fun main(args: Array<String>) {
-    val hashtweet = Hashtweet()
-
-    println(hashtweet.loadTweetList("#hello"))
+fun main(args: Array<String>) = runBlocking {
+    Hashtweet().use { hashtweet ->
+        println(hashtweet.loadTweetList("#hello"))
+    }
 }
 
 /* ====== Retrofit2 Twitter Service ======*/
