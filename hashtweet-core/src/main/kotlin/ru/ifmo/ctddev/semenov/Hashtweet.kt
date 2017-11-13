@@ -1,39 +1,58 @@
 package ru.ifmo.ctddev.semenov
 
-import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.experimental.runBlocking
 import okhttp3.*
-import okhttp3.Credentials
-import retrofit2.HttpException
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
-import retrofit2.http.*
-import retrofit2.http.Headers
 import ru.gildor.coroutines.retrofit.await
+import ru.ifmo.ctddev.semenov.model.Tweet
+import ru.ifmo.ctddev.semenov.model.TwitterAuthService
+import ru.ifmo.ctddev.semenov.model.TwitterService
 import java.nio.charset.StandardCharsets
-import java.nio.file.FileSystems
-import java.nio.file.Files
-import java.nio.file.Paths
-import java.util.*
+import java.time.*
 
-class Hashtweet : AutoCloseable {
-    suspend fun loadTweetList(hashtag: String): TweetList? {
-        if (accessToken == null && !authenticate()) {
-            log("Cannot authenticate")
-            return null
-        }
-
-        return try {
-            twi.getTweets(
-                    hashtag = hashtag,
-                    count = null
-            ).await()
-        } catch (e: HttpException) {
-            log("Cannot load tweets", e)
-            null
+class Hashtweet(private val twitterService: TwitterService) {
+    suspend fun loadTweetList(hashtag: String, hours: Int): List<List<Tweet>>? {
+        try {
+            val result = List<ArrayList<Tweet>>(hours, { _ -> arrayListOf() })
+            val currentTime = ZonedDateTime.now()
+                    .withZoneSameInstant(ZoneOffset.UTC)
+                    .toLocalDateTime()
+            var maxId: String? = null
+            var outOf = false
+            while (!outOf) {
+                val tweetList = twitterService.getTweets(
+                        hashtag = hashtag,
+                        maxId = maxId
+                ).await().tweets
+                for (tweet in tweetList) {
+                    val tweetTime = ZonedDateTime.parse(tweet.createdAt, twitterDateTimeFormatter)
+                            .withZoneSameInstant(ZoneOffset.UTC)
+                            .toLocalDateTime()
+                    val diff = Duration.between(tweetTime, currentTime).toHours()
+                    if (diff < hours) {
+                        result[diff.toInt()].add(tweet)
+                        maxId = minOf(maxId, tweet.id, Comparator { fst, snd ->
+                            (fst?.toLong() ?: Long.MAX_VALUE).compareTo(snd?.toLong() ?: Long.MAX_VALUE)
+                        })
+                    } else {
+                        outOf = true
+                    }
+                }
+                maxId = maxId?.toLong()?.minus(1).toString()
+            }
+            return result
         } catch (e: Exception) {
             log("Cannot load tweets", e)
-            null
+            return null
+        }
+    }
+}
+
+class BasicClient(private val authenticator: Authenticator? = null, private val interceptor: Interceptor? = null) : AutoCloseable {
+    val client: OkHttpClient by lazy {
+        OkHttpClient.Builder().run {
+            if (interceptor != null) addInterceptor(interceptor)
+            if (authenticator != null) authenticator(authenticator)
+            build()
         }
     }
 
@@ -41,18 +60,20 @@ class Hashtweet : AutoCloseable {
         client.dispatcher().executorService().shutdown()
         client.connectionPool().evictAll()
     }
+}
 
-    private val credentials = loadCredentials()
+class AuthClient(private val twitterAuthService: TwitterAuthService, private val credentials: TwitterCredentials) : AutoCloseable {
+    val client: OkHttpClient by lazy { delegate.client }
 
-    @Volatile
-    private var accessToken: String? = null
+    private val delegate: BasicClient by lazy { BasicClient(authenticator, interceptor) }
 
-    private val authenticator = Authenticator { route, response ->
+    private @Volatile var accessToken: String? = null
+
+    private val authenticator = Authenticator { route: Route?, response: Response? ->
         log("Authenticate($route, $response)")
-        if (response == null || route == null) {
+        if (response == null || route == null || runBlocking { !authenticate() }) {
             return@Authenticator null
         }
-        if (runBlocking { !authenticate() }) return@Authenticator null
         val originalRequest = response.request()
         originalRequest.newBuilder()
                 .header("Authorization", "Bearer $accessToken")
@@ -64,7 +85,7 @@ class Hashtweet : AutoCloseable {
         chain!!
         val originalRequest = chain.request()
         chain.proceed(
-                if (accessToken == null) {
+                if (accessToken == null && runBlocking { !authenticate() }) {
                     originalRequest
                 } else {
                     originalRequest.newBuilder().apply {
@@ -76,16 +97,9 @@ class Hashtweet : AutoCloseable {
         )
     }
 
-    private val client = OkHttpClient.Builder()
-            .addInterceptor(interceptor)
-            .authenticator(authenticator)
-            .build()
-
-    private val twi = TwitterService.create(client)
-
     private suspend fun authenticate(): Boolean {
         try {
-            val token = twi.getAuthToken(
+            val token = twitterAuthService.getAuthToken(
                     Credentials.basic(credentials.consumerKey, credentials.consumerSecret, StandardCharsets.UTF_8)
             ).await()
             if (token.tokenType == "bearer") {
@@ -98,101 +112,8 @@ class Hashtweet : AutoCloseable {
         }
         return false
     }
-}
 
-
-fun main(args: Array<String>) = runBlocking {
-    Hashtweet().use { hashtweet ->
-        println(hashtweet.loadTweetList("#hello"))
+    override fun close() {
+        delegate.close()
     }
-}
-
-/* ====== Retrofit2 Twitter Service ======*/
-
-interface TwitterService {
-    companion object Factory {
-        private val BASE_URL = "https://api.twitter.com/"
-
-        fun create(client: OkHttpClient = OkHttpClient()): TwitterService {
-            val retrofit = Retrofit.Builder()
-                    .baseUrl(BASE_URL)
-                    .addConverterFactory(GsonConverterFactory.create())
-                    .client(client)
-                    .build()
-
-            return retrofit.create(TwitterService::class.java)
-        }
-    }
-
-    @GET("/1.1/search/tweets.json")
-    fun getTweets(
-            @Query("q") hashtag: String,
-            @Query("since_id") sinceId: String? = null,
-            @Query("max_id") maxId: String? = null,
-            @Query("result_type") resultType: String = "recent",
-            @Query("count") count: Int? = 100
-    ): retrofit2.Call<TweetList>
-
-    @FormUrlEncoded
-    @Headers("User-Agent: Hashtweet by Vadzim")
-    @POST("/oauth2/token")
-    fun getAuthToken(
-            @Header("Authorization") credentials: String,
-            @Field("grant_type") body: String = "client_credentials"
-    ): retrofit2.Call<AuthToken>
-}
-
-
-/* ====== GSON data classes ======*/
-
-data class AuthToken(
-        @SerializedName("token_type") val tokenType: String,
-        @SerializedName("access_token") val accessToken: String
-)
-
-data class TweetList(
-        @SerializedName("statuses") val tweets: ArrayList<Tweet>
-)
-
-data class Tweet(
-        @SerializedName("created_at") val createdAt: String,
-        @SerializedName("id") val id: String,
-        @SerializedName("text") val text: String
-)
-
-
-/* ====== Twitter credentials ======*/
-
-data class TwitterCredentials(val consumerKey: String, val consumerSecret: String)
-
-private fun loadCredentials(): TwitterCredentials {
-    if (ClassLoader.getSystemClassLoader() == null) throw IllegalStateException("no SystemClassLoader")
-    val uri = ClassLoader.getSystemClassLoader()?.getResource("secrets.properties")?.toURI() ?:
-            return TwitterCredentials("", "")
-    if (uri.isOpaque) {
-        // See http://docs.oracle.com/javase/8/docs/technotes/guides/io/fsp/zipfilesystemprovider.html
-        FileSystems.newFileSystem(uri, mapOf("create" to "true"))
-    }
-    return Properties()
-            .apply {
-                try {
-                    load(Files.newBufferedReader(Paths.get(uri)))
-                } catch (e: Exception) {
-                    log("Cannot load secrets.properties", e)
-                }
-            }
-            .run {
-                TwitterCredentials(
-                        getProperty("CONSUMER_KEY", ""),
-                        getProperty("CONSUMER_SECRET", "")
-                )
-            }
-}
-
-
-/* ====== Logging ====== */
-
-internal fun log(message: Any?, throwable: Throwable? = null) {
-    System.err.println(message)
-    throwable?.printStackTrace(System.err)
 }
