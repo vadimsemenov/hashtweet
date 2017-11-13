@@ -17,14 +17,12 @@ object CliHashtweet {
         val hashtag = normalizeHashtag(args[0])
         val hours = args[1].toInt()
 
-        BasicClient().use { basicClient ->
-            AuthClient(RetrofitHandler(basicClient.client, BASE_URL)
-                    .create(TwitterAuthService::class.java), loadCredentials()).use { client ->
-                val retrofit = RetrofitHandler(client.client, BASE_URL)
-                val twi = retrofit.create(TwitterService::class.java)
-                val hashtweet = Hashtweet(twi)
-                println(hashtweet.loadTweetList(hashtag, hours)?.map { it.size })
-            }
+        AuthClient(RetrofitHandler(baseUrl = BASE_URL)
+                .create(TwitterAuthService::class.java), loadCredentials()).use { client ->
+            val retrofit = RetrofitHandler(client.client, BASE_URL)
+            val twi = retrofit.create(TwitterService::class.java)
+            val hashtweet = Hashtweet(twi)
+            println(hashtweet.loadTweetList(hashtag, hours)?.map { it.size })
         }
     }
 

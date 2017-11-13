@@ -47,35 +47,22 @@ class Hashtweet(private val twitterService: TwitterService) {
     }
 }
 
-class BasicClient(private val authenticator: Authenticator? = null, private val interceptor: Interceptor? = null) : AutoCloseable {
-    val client: OkHttpClient by lazy {
-        OkHttpClient.Builder().run {
-            if (interceptor != null) addInterceptor(interceptor)
-            if (authenticator != null) authenticator(authenticator)
-            build()
-        }
-    }
-
-    override fun close() {
-        client.dispatcher().executorService().shutdown()
-        client.connectionPool().evictAll()
-    }
-}
-
 class AuthClient(private val twitterAuthService: TwitterAuthService, private val credentials: TwitterCredentials) : AutoCloseable {
-    val client: OkHttpClient by lazy { delegate.client }
-
-    private val delegate: BasicClient by lazy { BasicClient(authenticator, interceptor) }
+    val client: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+                .addInterceptor(interceptor)
+                .authenticator(authenticator)
+                .build()
+    }
 
     private @Volatile var accessToken: String? = null
 
     private val authenticator = Authenticator { route: Route?, response: Response? ->
         log("Authenticate($route, $response)")
-        if (response == null || route == null || runBlocking { !authenticate() }) {
+        if (response == null || route == null || !authenticateBlocking()) {
             return@Authenticator null
         }
-        val originalRequest = response.request()
-        originalRequest.newBuilder()
+        response.request().newBuilder()
                 .header("Authorization", "Bearer $accessToken")
                 .build()
     }
@@ -85,17 +72,17 @@ class AuthClient(private val twitterAuthService: TwitterAuthService, private val
         chain!!
         val originalRequest = chain.request()
         chain.proceed(
-                if (accessToken == null && runBlocking { !authenticate() }) {
+                if (accessToken == null && !authenticateBlocking()) {
                     originalRequest
                 } else {
-                    originalRequest.newBuilder().apply {
-                        if (accessToken != null) {
-                            header("Authorization", "Bearer $accessToken")
-                        }
-                    }.build()
+                    originalRequest.newBuilder()
+                            .header("Authorization", "Bearer $accessToken")
+                            .build()
                 }
         )
     }
+
+    private fun authenticateBlocking(): Boolean = runBlocking { authenticate() }
 
     private suspend fun authenticate(): Boolean {
         try {
@@ -114,6 +101,7 @@ class AuthClient(private val twitterAuthService: TwitterAuthService, private val
     }
 
     override fun close() {
-        delegate.close()
+        client.dispatcher().executorService().shutdown()
+        client.connectionPool().evictAll()
     }
 }
