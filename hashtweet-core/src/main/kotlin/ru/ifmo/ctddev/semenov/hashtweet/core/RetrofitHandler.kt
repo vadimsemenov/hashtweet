@@ -1,4 +1,4 @@
-package ru.ifmo.ctddev.semenov
+package ru.ifmo.ctddev.semenov.hashtweet.core
 
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit

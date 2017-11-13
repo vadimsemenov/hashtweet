@@ -1,9 +1,11 @@
-package ru.ifmo.ctddev.semenov.example
+package ru.ifmo.ctddev.semenov.hashtweet.core.example
 
 import kotlinx.coroutines.experimental.runBlocking
-import ru.ifmo.ctddev.semenov.*
-import ru.ifmo.ctddev.semenov.model.TwitterAuthService
-import ru.ifmo.ctddev.semenov.model.TwitterService
+import ru.ifmo.ctddev.semenov.hashtweet.core.*
+import ru.ifmo.ctddev.semenov.hashtweet.core.model.TwitterAuthService
+import ru.ifmo.ctddev.semenov.hashtweet.core.model.TwitterService
+import ru.ifmo.ctddev.semenov.hashtweet.core.utils.loadCredentials
+import ru.ifmo.ctddev.semenov.hashtweet.core.utils.normalizeHashtag
 
 object CliHashtweet {
     private val BASE_URL = "https://api.twitter.com/"

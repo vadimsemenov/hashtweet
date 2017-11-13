@@ -1,4 +1,4 @@
-package ru.ifmo.ctddev.semenov
+package ru.ifmo.ctddev.semenov.hashtweet.core.utils
 
 import java.nio.file.FileSystems
 import java.nio.file.Files

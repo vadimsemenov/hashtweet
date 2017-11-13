@@ -1,4 +1,4 @@
-package ru.ifmo.ctddev.semenov.model
+package ru.ifmo.ctddev.semenov.hashtweet.core.model
 
 import com.google.gson.annotations.SerializedName
 import java.util.ArrayList
