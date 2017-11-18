@@ -8,12 +8,13 @@ import ru.ifmo.ctddev.semenov.hashtweet.core.utils.TwitterCredentials
 import ru.ifmo.ctddev.semenov.hashtweet.core.utils.log
 import java.nio.charset.StandardCharsets
 
-class AuthClient(private val twitterAuthService: TwitterAuthService, private val credentials: TwitterCredentials) : AutoCloseable {
+class AuthClient(private val twitterAuthService: TwitterAuthService, private val credentials: TwitterCredentials, private val lastInterceptor: Interceptor? = null) : AutoCloseable {
     val client: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-                .addInterceptor(interceptor)
-                .authenticator(authenticator)
-                .build()
+        OkHttpClient.Builder().apply {
+            addInterceptor(interceptor)
+            authenticator(authenticator)
+            if (lastInterceptor != null) addInterceptor(lastInterceptor)
+        }.build()
     }
 
     private @Volatile var accessToken: String? = null
@@ -45,7 +46,7 @@ class AuthClient(private val twitterAuthService: TwitterAuthService, private val
 
     private fun authenticateBlocking(): Boolean = runBlocking { authenticate() }
 
-    private suspend fun authenticate(): Boolean {
+    internal suspend fun authenticate(): Boolean {
         try {
             val token = twitterAuthService.getAuthToken(
                     Credentials.basic(credentials.consumerKey, credentials.consumerSecret, StandardCharsets.UTF_8)
